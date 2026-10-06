@@ -1,45 +1,160 @@
 # 小红书风格笔记推荐系统
 
-> 多路召回 + 多目标排序 + 多样性重排的全链路推荐系统
+> 多路召回 + LightGBM 排序 + MMR 多样性重排的全链路推荐系统
+
+一个端到端的推荐系统实践项目，覆盖数据生成、多路召回、排序、重排、离线评估全流程。
+
+## 效果
+
+| 指标 | 基础召回 | +向量召回 | +LightGBM 排序 | +MMR 重排 |
+|---|---|---|---|---|
+| Recall@100 | 0.1566 | 0.1552 | - | - |
+| Coverage | 0.3964 | **0.4602** | - | - |
+| NDCG@10 | - | - | 0.0592 | **0.0593** |
+| Hit@10 | - | - | 0.4200 | 0.4200 |
+| 类目熵 | - | - | 0.1912 | **0.2997** |
+| 同作者重复率 | - | - | 0.0122 | **0.0022** |
+
+**关键成果**：
+
+- 多路召回覆盖率从 39.6% 提升到 46.0%（+16%）
+- LightGBM 排序 NDCG@10 相比 RRF 直排提升 8.0%
+- MMR 重排在几乎不损失相关性（NDCG +0.2%）的前提下，类目熵提升 56.7%，同作者重复率下降 81.8%
+
+## 架构
+
+```
+用户请求
+   ↓
+┌─────────────────────────────────────┐
+│ 多路召回                            │
+│  ├─ ItemCF（协同过滤）              │
+│  ├─ 热门召回（兜底）                │
+│  └─ 向量召回（MiniLM + FAISS）      │
+│  ↓ RRF 融合                         │
+└─────────────────────────────────────┘
+   ↓ 200 个候选
+┌─────────────────────────────────────┐
+│ LightGBM 排序                       │
+│  12 维特征（用户/笔记/交叉/召回分） │
+└─────────────────────────────────────┘
+   ↓ Top-50
+┌─────────────────────────────────────┐
+│ MMR 多样性重排                      │
+│  类目/作者/embedding 三层相似度     │
+└─────────────────────────────────────┘
+   ↓ Top-10
+推荐结果
+```
 
 ## 技术栈
-- 数据：Pandas + 模拟数据
-- 召回：ItemCF + 热门召回 + FAISS 双塔
-- 排序：LightGBM 多目标
-- 重排：MMR 多样性 + 业务规则
-- 服务：FastAPI + Redis
-- 前端：Streamlit
+
+| 层 | 技术 |
+|---|---|
+| 数据处理 | Pandas, NumPy |
+| 召回 | ItemCF, FAISS, sentence-transformers (MiniLM) |
+| 排序 | LightGBM |
+| 重排 | MMR (Maximal Marginal Relevance) |
+| 评估 | Recall@K, NDCG@K, Hit@K, 类目熵, 作者重复率 |
+| 服务 | FastAPI + Uvicorn |
+| 前端 | Streamlit |
 
 ## 快速开始
 
+### 1. 环境
+
 ```bash
-# 1. 安装依赖
 pip install -r requirements.txt
+```
 
-# 2. 生成模拟数据
+### 2. 生成模拟数据
+
+```bash
 python data/generate_data.py
+```
 
-# 3. 跑离线评估
-python evaluation/offline.py
+生成 1000 用户 / 5000 笔记 / 20 万条行为日志，输出到 `data/raw/`。
+
+### 3. 跑离线评估
+
+```bash
+# Day 1: ItemCF + 热门召回
+python scripts/run_day1.py
+
+# Day 2: 加入向量召回，对比覆盖率
+python scripts/run_day2.py
+
+# Day 3: LightGBM 排序
+python scripts/run_day3.py
+
+# Day 4: MMR 多样性重排
+python scripts/run_day4.py
 ```
 
 ## 项目结构
+
 ```
 xhs-recsys/
 ├── data/
-│   ├── raw/                  # 原始数据
-│   ├── processed/            # 特征
-│   └── generate_data.py      # 模拟数据生成
-├── recall/
-│   ├── itemcf.py             # ItemCF 召回
+│   ├── generate_data.py      # 模拟数据生成
+│   └── raw/                  # 生成的 csv（gitignore）
+├── recall/                   # 多路召回
+│   ├── itemcf.py             # ItemCF 协同过滤
 │   ├── hot.py                # 热门召回
-│   └── recall_manager.py     # 多路召回统一入口
-├── rank/                     # Day 3
-├── rerank/                   # Day 4
-├── evaluation/
-│   └── offline.py            # 离线评估
-├── service/                  # Day 5
-├── demo/                     # Day 5
-├── models/
-└── requirements.txt
+│   ├── two_tower.py          # 向量召回（MiniLM + FAISS）
+│   └── recall_manager.py     # RRF 融合
+├── rank/                     # 排序
+│   ├── features.py           # 12 维特征工程
+│   └── fine_rank.py          # LightGBM 排序模型
+├── rerank/                   # 重排
+│   ├── mmr.py                # MMR 多样性重排
+│   └── cold_start.py         # 冷启动策略
+├── evaluation/               # 评估
+│   ├── offline.py            # 召回评估
+│   ├── ranking_metrics.py    # NDCG / Hit
+│   └── diversity.py          # 类目熵 / 作者重复率
+├── scripts/                  # 实验脚本
+│   ├── run_day1.py
+│   ├── run_day2.py
+│   ├── run_day3.py
+│   └── run_day4.py
+├── requirements.txt
+└── README.md
 ```
+
+## 模块说明
+
+### 多路召回
+
+- **ItemCF**：基于用户行为共现计算 item-item 相似度，按行为类型加权（收藏 > 评论 > 点赞 > 点击）
+- **热门召回**：全局热门 + 类目热门，作为兜底
+- **向量召回**：MiniLM 编码笔记标题+标签+类目（384 维），用户向量由历史行为加权平均，FAISS 内积检索
+- **融合策略**：RRF (Reciprocal Rank Fusion)，对分数尺度不敏感，避免归一化带来的长尾塌陷
+
+### 排序
+
+- **特征**：用户侧（活跃度、类目偏好、作者互动）、笔记侧（热度、类目热度）、交叉（偏好匹配）、召回分（三路 + RRF + 多路命中数），共 12 维
+- **模型**：LightGBM 二分类 CTR 模型，正负样本比约 1:13
+
+### 重排
+
+- **MMR**：lambda=0.7，融合类目（0.3）、作者（0.4）、embedding（0.3）三层相似度
+- **冷启动**：新用户走「兴趣类目 + 热门兜底」组合召回
+
+## 数据说明
+
+本项目使用**模拟生成**的数据，不涉及任何真实用户数据。数据生成保证：
+
+- 每个用户有稳定偏好类目（1~3 个）
+- 行为按用户兴趣 × 笔记隐向量的 softmax 采样
+- 命中偏好类目比例 91.2%（随机基线约 20%）
+
+## 环境
+
+- Python 3.10+
+- 依赖见 `requirements.txt`
+- 无需 GPU，CPU 可完整运行
+
+## License
+
+MIT
