@@ -2,7 +2,7 @@
 
 > 多路召回 + LightGBM 排序 + MMR 多样性重排的全链路推荐系统
 
-一个端到端的推荐系统实践项目，覆盖数据生成、多路召回、排序、重排、离线评估全流程。
+一个端到端的推荐系统实践项目，覆盖数据生成、多路召回、排序、重排、离线评估和在线服务全流程。
 
 ## 效果
 
@@ -14,17 +14,27 @@
 | Hit@10 | - | - | 0.4200 | 0.4200 |
 | 类目熵 | - | - | 0.1912 | **0.2997** |
 | 同作者重复率 | - | - | 0.0122 | **0.0022** |
+| 推荐延迟 P50 | - | - | 77.5 ms | 77.5 ms |
+| 缓存命中延迟 | - | - | - | **0.5 ms** |
 
 **关键成果**：
 
 - 多路召回覆盖率从 39.6% 提升到 46.0%（+16%）
 - LightGBM 排序 NDCG@10 相比 RRF 直排提升 8.0%
 - MMR 重排在几乎不损失相关性（NDCG +0.2%）的前提下，类目熵提升 56.7%，同作者重复率下降 81.8%
+- 在线服务缓存加速 **155 倍**（77.5 ms → 0.5 ms）
 
 ## 架构
 
 ```
 用户请求
+   ↓
+┌─────────────────────────────────────┐
+│ FastAPI (/recommend)                │
+│   ↓ 先查缓存                         │
+│ TTL Cache ──命中──→ 直接返回         │
+│   ↓ 未命中                           │
+└─────────────────────────────────────┘
    ↓
 ┌─────────────────────────────────────┐
 │ 多路召回                            │
@@ -44,7 +54,7 @@
 │  类目/作者/embedding 三层相似度     │
 └─────────────────────────────────────┘
    ↓ Top-10
-推荐结果
+返回结果（写入缓存）
 ```
 
 ## 技术栈
@@ -58,6 +68,7 @@
 | 评估 | Recall@K, NDCG@K, Hit@K, 类目熵, 作者重复率 |
 | 服务 | FastAPI + Uvicorn |
 | 前端 | Streamlit |
+| 缓存 | 内存 TTL Cache（可替换为 Redis） |
 
 ## 快速开始
 
@@ -91,6 +102,57 @@ python scripts/run_day3.py
 python scripts/run_day4.py
 ```
 
+### 4. 启动 API 服务
+
+```bash
+uvicorn service.main:app --port 8000
+```
+
+打开 http://localhost:8000/docs 查看 API 文档（Swagger UI）。
+
+### 5. 启动可视化 Demo
+
+```bash
+streamlit run demo/app.py
+```
+
+打开 http://localhost:8501 查看推荐效果。
+
+## API 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/health` | 服务健康检查 |
+| POST | `/recommend` | 获取 Top-K 推荐 |
+
+**请求示例**：
+
+```bash
+curl -X POST http://localhost:8000/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": 0, "k": 10}'
+```
+
+**响应示例**：
+
+```json
+{
+  "user_id": 0,
+  "items": [
+    {
+      "note_id": 4404,
+      "title": "笔记_4404_学习",
+      "category": "学习",
+      "tags": "tag4,cat4",
+      "score": 0.87,
+      "source": "mmr"
+    }
+  ],
+  "latency_ms": 77.5,
+  "from_cache": false
+}
+```
+
 ## 项目结构
 
 ```
@@ -113,6 +175,13 @@ xhs-recsys/
 │   ├── offline.py            # 召回评估
 │   ├── ranking_metrics.py    # NDCG / Hit
 │   └── diversity.py          # 类目熵 / 作者重复率
+├── service/                  # 在线服务
+│   ├── main.py               # FastAPI 入口
+│   ├── pipeline.py           # 推荐主流程
+│   ├── schemas.py            # Pydantic 模型
+│   └── cache.py              # TTL 缓存
+├── demo/                     # 前端
+│   └── app.py                # Streamlit Demo
 ├── scripts/                  # 实验脚本
 │   ├── run_day1.py
 │   ├── run_day2.py
@@ -140,6 +209,12 @@ xhs-recsys/
 
 - **MMR**：lambda=0.7，融合类目（0.3）、作者（0.4）、embedding（0.3）三层相似度
 - **冷启动**：新用户走「兴趣类目 + 热门兜底」组合召回
+
+### 在线服务
+
+- **FastAPI**：自动生成 Swagger 文档，Pydantic 校验请求体
+- **TTL 缓存**：内存缓存，5 分钟过期，缓存命中后延迟 < 1 ms
+- **Streamlit Demo**：可视化推荐结果，展示服务状态和延迟
 
 ## 数据说明
 
