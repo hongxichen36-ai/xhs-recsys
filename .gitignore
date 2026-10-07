@@ -1,12 +1,22 @@
-﻿__pycache__/
+﻿# Python
+__pycache__/
 *.py[cod]
-data/raw/*.csv
-data/processed/*.csv
+
+# 数据（任何位置的 csv 都不提交）
+*.csv
+data/raw/
+data/processed/
+
+# 虚拟环境
 .venv/
 venv/
 env/
+
+# IDE
 .idea/
 .vscode/
 *.swp
+
+# 系统
 .DS_Store
 Thumbs.db
